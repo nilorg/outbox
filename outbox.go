@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/bwmarrin/snowflake"
@@ -13,11 +14,15 @@ import (
 	"gorm.io/gorm"
 )
 
+// TransactionHandler ...
+type TransactionHandler func(ctx context.Context, db interface{}) error
+
 // Transactioner 事务接口
 type Transactioner interface {
 	Begin(ctx context.Context, opts ...*sql.TxOptions) (tx interface{}, err error)
 	Rollback(ctx context.Context) (err error)
 	Commit(ctx context.Context, args ...*CommitMessage) (err error)
+	Transaction(ctx context.Context, h TransactionHandler, args ...*CommitMessage) (err error)
 }
 
 // Subscriber 订阅接口
@@ -28,8 +33,8 @@ type Subscriber interface {
 
 // Publisher 发布接口
 type Publisher interface {
-	Publish(ctx context.Context, topic string, v interface{}) (err error)
-	PublishAsync(ctx context.Context, topic string, v interface{}) (err error)
+	Publish(ctx context.Context, topic string, v interface{}, callback ...string) (err error)
+	PublishAsync(ctx context.Context, topic string, v interface{}, callback ...string) (err error)
 }
 
 const (
@@ -39,29 +44,29 @@ const (
 
 // Engine ...
 type Engine interface {
-	Subscribe(ctx context.Context, topic string, h eventbus.SubscribeHandler) (err error)
-	SubscribeAsync(ctx context.Context, topic string, h eventbus.SubscribeHandler) (err error)
-	Publish(ctx context.Context, topic string, v interface{}, callback ...string) (err error)
-	PublishAsync(ctx context.Context, topic string, v interface{}, callback ...string) (err error)
+	Publisher
+	Subscriber
+	Transactioner
 }
 
 // gormEngine ...
 type gormEngine struct {
-	db          *gorm.DB
-	node        *snowflake.Node
-	transaction Transactioner
-	eventBus    eventbus.EventBus
-	logger      Logger
+	db       *gorm.DB
+	tx       *gorm.DB
+	txMutex  sync.Mutex
+	node     *snowflake.Node
+	eventBus eventbus.EventBus
+	logger   Logger
 }
 
 // Subscribe ...
 func (e *gormEngine) Subscribe(ctx context.Context, topic string, h eventbus.SubscribeHandler) (err error) {
-	return e.eventBus.Subscribe(ctx, topic, h)
+	return e.subscribe(ctx, e.db, topic, h, false)
 }
 
 // SubscribeAsync ...
 func (e *gormEngine) SubscribeAsync(ctx context.Context, topic string, h eventbus.SubscribeHandler) (err error) {
-	return e.SubscribeAsync(ctx, topic, h)
+	return e.subscribe(ctx, e.db, topic, h, true)
 }
 
 func (e *gormEngine) subscribe(ctx context.Context, db *gorm.DB, topic string, h eventbus.SubscribeHandler, async bool) (err error) {
@@ -91,8 +96,15 @@ func (e *gormEngine) newSubscribeHandler(db *gorm.DB, topic, group string, h eve
 		}
 		hErr := h(ctx, msg)
 		if hErr != nil {
+			// 下次自动执行时间
+			exp := time.Now().Add(5 * time.Minute)
+			r.ExpiresAt = &exp
 			// 使用日志组件，打印日志
-			e.logger.Errorf(ctx, "exec subscribe handler error: %s", hErr)
+			if group != "" {
+				e.logger.Errorf(ctx, "exec subscribe %s handler error: %s", topic, hErr)
+			} else {
+				e.logger.Errorf(ctx, "exec subscribe %s(%s) handler error: %s", topic, group, hErr)
+			}
 		} else {
 			r.StatusName = StatusNameSucceeded
 		}
@@ -151,7 +163,11 @@ func (e *gormEngine) publish(ctx context.Context, db *gorm.DB, topic string, v i
 		pubErr = e.eventBus.Publish(ctx, topic, msg)
 	}
 	if pubErr != nil {
+		// 下次自动执行时间
+		exp := time.Now().Add(5 * time.Minute)
+		p.ExpiresAt = &exp
 		// 使用日志组件，打印日志
+		e.logger.Errorf(ctx, "exec async:%v publish %s error: %s", async, topic, pubErr)
 	} else {
 		p.StatusName = StatusNameSucceeded
 	}
@@ -178,26 +194,61 @@ func (e *gormEngine) changeReceiveState(db *gorm.DB, msgID int64, state string) 
 	return db.Model(&Received{}).Where("id = ?", msgID).Updates(&Received{StatusName: state}).Error
 }
 
+// Begin ...
+func (e *gormEngine) Begin(ctx context.Context, opts ...*sql.TxOptions) (tx interface{}, err error) {
+	e.txMutex.Lock()
+	defer e.txMutex.Unlock()
+	gormTx := e.db.WithContext(ctx).Begin(opts...)
+	if err = gormTx.Error; err != nil {
+		e.tx = nil
+		return
+	}
+	e.tx = gormTx
+	tx = gormTx
+	return
+}
+
+// Rollback ...
+func (e *gormEngine) Rollback(ctx context.Context) (err error) {
+	err = e.tx.WithContext(ctx).Rollback().Error
+	return
+}
+
+// Commit ...
+func (e *gormEngine) Commit(ctx context.Context, args ...*CommitMessage) (err error) {
+	if len(args) > 0 {
+		for _, arg := range args {
+			if pubErr := e.publish(ctx, e.tx, arg.Topic, arg.Value, false, arg.CallbackTopic); pubErr != nil {
+				e.logger.Errorf(ctx, "commit publish error: %s", pubErr)
+				err = e.Rollback(ctx)
+				return
+			}
+		}
+	}
+	err = e.tx.WithContext(ctx).Commit().Error
+	return
+}
+
+func (e *gormEngine) Transaction(ctx context.Context, h TransactionHandler, args ...*CommitMessage) (err error) {
+	var tx interface{}
+	tx, err = e.Begin(ctx)
+	if err != nil {
+		return
+	}
+	if err = h(ctx, tx); err != nil {
+		e.Rollback(ctx)
+	}
+	err = e.Commit(ctx, args...)
+	return
+}
+
 // New 创建
 func New(typ string, v interface{}, eventBus eventbus.EventBus) (engine Engine, err error) {
-	var (
-		transaction Transactioner
-	)
 	if typ == EngineTypeGorm {
-		// rmqOpt := eventbus.DefaultRabbitMQOptions
-		// rmqOpt.ExchangeName = "nilorg.outbox.v1"
-		// rmqOpt.DefaultGroupID = "nilorg.outbox.default.group.v1"
-		// if eventBus, err = eventbus.NewRabbitMQ(conn, &rmqOpt); err != nil {
-		// 	return
-		// }
 		db := v.(*gorm.DB)
-		if transaction, err = NewGormTransaction(db, eventBus); err != nil {
-			return
-		}
 		engine = &gormEngine{
-			db:          db,
-			transaction: transaction,
-			eventBus:    eventBus,
+			db:       db,
+			eventBus: eventBus,
 		}
 	} else {
 		err = errors.New("type is error")
