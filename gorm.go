@@ -22,6 +22,7 @@ const (
 type gormEngine struct {
 	db       *gorm.DB
 	tx       *gorm.DB
+	txFlag   bool
 	txMutex  sync.Mutex
 	node     *snowflake.Node
 	eventBus eventbus.EventBus
@@ -30,23 +31,23 @@ type gormEngine struct {
 
 // Subscribe ...
 func (e *gormEngine) Subscribe(ctx context.Context, topic string, h SubscribeHandler) (err error) {
-	return e.subscribe(ctx, e.db, topic, h, false)
+	return e.subscribe(ctx, topic, h, false)
 }
 
 // SubscribeAsync ...
 func (e *gormEngine) SubscribeAsync(ctx context.Context, topic string, h SubscribeHandler) (err error) {
-	return e.subscribe(ctx, e.db, topic, h, true)
+	return e.subscribe(ctx, topic, h, true)
 }
 
-func (e *gormEngine) subscribe(ctx context.Context, db *gorm.DB, topic string, h SubscribeHandler, async bool) (err error) {
+func (e *gormEngine) subscribe(ctx context.Context, topic string, h SubscribeHandler, async bool) (err error) {
 	group, _ := eventbus.FromGroupIDContext(ctx)
 	if async {
-		return e.eventBus.SubscribeAsync(ctx, topic, e.newSubscribeHandler(db, topic, group, h))
+		return e.eventBus.SubscribeAsync(ctx, topic, e.newSubscribeHandler(topic, group, h))
 	}
-	return e.eventBus.Subscribe(ctx, topic, e.newSubscribeHandler(db, topic, group, h))
+	return e.eventBus.Subscribe(ctx, topic, e.newSubscribeHandler(topic, group, h))
 }
 
-func (e *gormEngine) newSubscribeHandler(db *gorm.DB, topic, group string, h SubscribeHandler) eventbus.SubscribeHandler {
+func (e *gormEngine) newSubscribeHandler(topic, group string, h SubscribeHandler) eventbus.SubscribeHandler {
 	return func(ctx context.Context, baseMsg *eventbus.Message) (err error) {
 		id := e.node.Generate().Int64()
 		var value string
@@ -79,7 +80,7 @@ func (e *gormEngine) newSubscribeHandler(db *gorm.DB, topic, group string, h Sub
 			r.StatusName = StatusNameSucceeded
 		}
 		// 记录发件箱 成功日志
-		if err = e.insertReceivedFromGorm(db, r); err != nil {
+		if err = e.insertReceivedFromGorm(e.db, r); err != nil {
 			return
 		}
 		return
@@ -88,15 +89,15 @@ func (e *gormEngine) newSubscribeHandler(db *gorm.DB, topic, group string, h Sub
 
 // Publish ...
 func (e *gormEngine) Publish(ctx context.Context, topic string, v interface{}, callback ...string) (err error) {
-	return e.publish(ctx, e.db, topic, v, false, callback...)
+	return e.publish(ctx, topic, v, false, callback...)
 }
 
 // PublishAsync ...
 func (e *gormEngine) PublishAsync(ctx context.Context, topic string, v interface{}, callback ...string) (err error) {
-	return e.publish(ctx, e.db, topic, v, true, callback...)
+	return e.publish(ctx, topic, v, true, callback...)
 }
 
-func (e *gormEngine) publish(ctx context.Context, db *gorm.DB, topic string, v interface{}, async bool, callback ...string) (err error) {
+func (e *gormEngine) publish(ctx context.Context, topic string, v interface{}, async bool, callback ...string) (err error) {
 	id := e.node.Generate().Int64()
 	timeNow := time.Now()
 	callbackName := ""
@@ -141,6 +142,12 @@ func (e *gormEngine) publish(ctx context.Context, db *gorm.DB, topic string, v i
 	} else {
 		p.StatusName = StatusNameSucceeded
 	}
+	var db *gorm.DB
+	if e.txFlag {
+		db = e.tx
+	} else {
+		db = e.db
+	}
 	// 记录发件箱 成功日志
 	if err = e.insertPublishedFromGorm(db, p); err != nil {
 		return
@@ -174,21 +181,32 @@ func (e *gormEngine) Begin(ctx context.Context, opts ...*sql.TxOptions) (tx inte
 		return
 	}
 	e.tx = gormTx
+	e.txFlag = true
+
 	tx = gormTx
 	return
 }
 
 // Rollback ...
 func (e *gormEngine) Rollback(ctx context.Context) (err error) {
+	e.txMutex.Lock()
+	defer e.txMutex.Unlock()
 	err = e.tx.WithContext(ctx).Rollback().Error
+	if err != nil {
+		return
+	}
+	e.txFlag = false
 	return
 }
 
 // Commit ...
 func (e *gormEngine) Commit(ctx context.Context, args ...*CommitMessage) (err error) {
+	e.txMutex.Lock()
+	defer e.txMutex.Unlock()
+
 	if len(args) > 0 {
 		for _, arg := range args {
-			if pubErr := e.publish(ctx, e.tx, arg.Topic, arg.Value, false, arg.CallbackTopic); pubErr != nil {
+			if pubErr := e.publish(ctx, arg.Topic, arg.Value, false, arg.CallbackTopic); pubErr != nil {
 				e.logger.Errorf(ctx, "commit publish error: %s", pubErr)
 				err = e.Rollback(ctx)
 				return
@@ -196,6 +214,10 @@ func (e *gormEngine) Commit(ctx context.Context, args ...*CommitMessage) (err er
 		}
 	}
 	err = e.tx.WithContext(ctx).Commit().Error
+	if err != nil {
+		return
+	}
+	e.txFlag = false
 	return
 }
 

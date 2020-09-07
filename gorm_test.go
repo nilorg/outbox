@@ -87,13 +87,13 @@ func TestGorm(t *testing.T) {
 		}
 	}()
 	time.Sleep(1 * time.Second)
-	// for i := 0; i < 100; i++ {
-	// 	err = engine.Publish(ctx, topic, "sync message")
-	// 	if err != nil {
-	// 		t.Error(err)
-	// 		return
-	// 	}
-	// 	fmt.Println("Publish sync success")
-	// }
+	for i := 0; i < 100; i++ {
+		err = engine.Publish(ctx, topic, "sync message")
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		fmt.Println("Publish sync success")
+	}
 	time.Sleep(time.Second * 5)
 }
