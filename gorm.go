@@ -83,13 +83,13 @@ func (e *gormEngine) newSubscribeHandler(topic, group string, h SubscribeHandler
 		if hErr != nil {
 			// 使用日志组件，打印日志
 			if group != "" {
-				e.logger.Errorf(ctx, "exec subscribe %s handler error: %s", topic, hErr)
+				e.logger.Errorf(ctx, "execute subscribe %s handler error: %s", topic, hErr)
 			} else {
-				e.logger.Errorf(ctx, "exec subscribe %s(%s) handler error: %s", topic, group, hErr)
+				e.logger.Errorf(ctx, "execute subscribe %s(%s) handler error: %s", topic, group, hErr)
 			}
 		} else {
 			// 成功消息记录，到期时间
-			exp := time.Now().AddDate(0, 0, 15)
+			exp := time.Now().Add(e.options.SucceedMessageExpiredAfter)
 			r.ExpiresAt = &exp
 			r.StatusName = StatusNameSucceeded
 		}
@@ -149,10 +149,10 @@ func (e *gormEngine) publish(ctx context.Context, topic string, v interface{}, a
 	}
 	if pubErr != nil {
 		// 使用日志组件，打印日志
-		e.logger.Errorf(ctx, "exec async:%v publish %s error: %s", async, topic, pubErr)
+		e.logger.Errorf(ctx, "execute async:%v publish %s error: %s", async, topic, pubErr)
 	} else {
 		// 成功消息记录，到期时间
-		exp := time.Now().Add(24 * time.Hour)
+		exp := time.Now().Add(e.options.SucceedMessageExpiredAfter)
 		p.ExpiresAt = &exp
 		p.StatusName = StatusNameSucceeded
 	}
@@ -187,8 +187,18 @@ func (e *gormEngine) changePublishState(db *gorm.DB, msgID int64, state string) 
 	return db.Model(&Published{}).Where(&Published{ID: msgID}).Updates(&Published{StatusName: state}).Error
 }
 
+func (e *gormEngine) changePublishStateSucceeded(db *gorm.DB, msgID int64) error {
+	exp := time.Now().Add(e.options.SucceedMessageExpiredAfter)
+	return db.Model(&Published{}).Where(&Published{ID: msgID}).Updates(&Published{StatusName: StatusNameSucceeded, ExpiresAt: &exp}).Error
+}
+
 func (e *gormEngine) changeReceiveState(db *gorm.DB, msgID int64, state string) error {
 	return db.Model(&Received{}).Where(&Received{ID: msgID}).Updates(&Received{StatusName: state}).Error
+}
+
+func (e *gormEngine) changeReceiveStateSucceeded(db *gorm.DB, msgID int64) error {
+	exp := time.Now().Add(e.options.SucceedMessageExpiredAfter)
+	return db.Model(&Received{}).Where(&Received{ID: msgID}).Updates(&Received{StatusName: StatusNameSucceeded, ExpiresAt: &exp}).Error
 }
 
 func (e *gormEngine) findPublishByState(db *gorm.DB, state string) (list []*Published, err error) {
@@ -286,7 +296,9 @@ func (e *gormEngine) Transaction(ctx context.Context, h TransactionHandler, args
 
 // dataClean 数据清理
 func (e *gormEngine) dataClean() (err error) {
-	expd := time.Now().Add(e.options.SucceedMessageExpiredAfter)
+	ctx := context.Background()
+	e.logger.Debugln(ctx, "execute dataClean")
+	expd := time.Now()
 	if err = e.deletePublished(e.db, StatusNameSucceeded, expd); err != nil {
 		return
 	}
@@ -298,6 +310,8 @@ func (e *gormEngine) dataClean() (err error) {
 
 // failedRetryInterval 失败重试间隔
 func (e *gormEngine) failedRetryInterval() (err error) {
+	ctx := context.Background()
+	e.logger.Debugln(ctx, "execute failedRetryInterval")
 	if err = e.failedPublishedRetryInterval(); err != nil {
 		return
 	}
@@ -330,18 +344,18 @@ func (e *gormEngine) failedPublishedRetryInterval() (err error) {
 		if published.Version != MessageVersion {
 			continue
 		}
+		// 添加重试次数
+		if err = e.retriePublished(e.db, published.ID); err != nil {
+			return
+		}
+
 		if msg, msgErr := decodeValue([]byte(published.Value)); msgErr != nil {
 			e.logger.Errorf(ctx, "failedRetryInterval-decodeValue error: %v", msgErr)
-			if err = e.retriePublished(e.db, published.ID); err != nil {
-				return
-			}
 		} else {
 			if pubErr := e.eventBus.Publish(ctx, published.Topic, msg); pubErr != nil {
-				if err = e.retriePublished(e.db, published.ID); err != nil {
-					return
-				}
+				e.logger.Errorf(ctx, "failedRetryInterval-Publish error: %v", pubErr)
 			} else {
-				if err = e.changePublishState(e.db, published.ID, StatusNameSucceeded); err != nil {
+				if err = e.changePublishStateSucceeded(e.db, published.ID); err != nil {
 					return
 				}
 			}
@@ -376,25 +390,23 @@ func (e *gormEngine) failedReceivedRetryInterval() (err error) {
 		if received.Version != MessageVersion {
 			continue
 		}
+		// 添加重试次数
+		if err = e.retrieReceived(e.db, received.ID); err != nil {
+			return
+		}
+
 		if msg, msgErr := decodeValue([]byte(received.Value)); msgErr != nil {
 			e.logger.Errorf(ctx, "failedRetryInterval-decodeValue error: %v", msgErr)
-			if err = e.retrieReceived(e.db, received.ID); err != nil {
-				return
-			}
 		} else {
 			hex := fmt.Sprintf("%s-%s", received.Topic, received.Group)
 			if subscribeItem, subscribeItemOk := e.subscribeItems[hex]; !subscribeItemOk || subscribeItem.h == nil {
-				if err = e.retrieReceived(e.db, received.ID); err != nil {
-					return
-				}
+				e.logger.Warnf(ctx, "failedRetryInterval-subscribeItem %s error: %v", hex, msgErr)
 			} else {
 				subMsg := Message(*msg)
 				if subErr := subscribeItem.h(ctx, &subMsg); subErr != nil {
-					if err = e.retrieReceived(e.db, received.ID); err != nil {
-						return
-					}
+					e.logger.Errorf(ctx, "failedRetryInterval-subscribeItem %s execute error: %v", hex, msgErr)
 				} else {
-					if err = e.changePublishState(e.db, received.ID, StatusNameSucceeded); err != nil {
+					if err = e.changePublishStateSucceeded(e.db, received.ID); err != nil {
 						return
 					}
 				}

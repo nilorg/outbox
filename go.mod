@@ -13,3 +13,5 @@ require (
 	gorm.io/driver/mysql v1.0.1
 	gorm.io/gorm v1.20.0
 )
+
+replace github.com/nilorg/eventbus v0.0.0-20200909080643-596addb6a180 => ../eventbus

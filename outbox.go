@@ -66,6 +66,7 @@ var (
 		DataCleanInterval:          time.Hour,
 		SucceedMessageExpiredAfter: 24 * time.Hour,
 		SnowflakeNode:              1,
+		Logger:                     &eventbus.StdLogger{},
 	}
 )
 
@@ -87,6 +88,7 @@ type EngineOptions struct {
 	SucceedMessageExpiredAfter time.Duration                  // 成功消息的过期时间
 	DataCleanInterval          time.Duration                  // 数据清理间隔
 	SnowflakeNode              int64                          // snowflake节点数
+	Logger                     Logger                         // 日志接口
 }
 
 // New 创建
@@ -115,6 +117,7 @@ func New(typ string, v interface{}, eventBus eventbus.EventBus, options ...*Engi
 			node:           node,
 			options:        &opts,
 			subscribeItems: make(map[string]*subscribeItem),
+			logger:         opts.Logger,
 		}
 		// 启动哨兵，处理出错数据
 		ge.sentry()

@@ -21,7 +21,7 @@ func newTestEventBus(t *testing.T) (bus eventbus.EventBus) {
 		t.Fatal(err)
 		return
 	}
-	bus, err = eventbus.NewRabbitMQ(conn, nil)
+	bus, err = eventbus.NewRabbitMQ(conn)
 	if err != nil {
 		t.Fatal(err)
 		return
@@ -42,7 +42,15 @@ func newTestGormEngine(t *testing.T) (engine Engine) {
 		t.Fatalf("gorm open error: %v", err)
 	}
 	bus := newTestEventBus(t)
-	engine, err = New(EngineTypeGorm, db, bus)
+	opts := &EngineOptions{
+		FailedRetryInterval:        time.Minute,
+		FailedRetryCount:           50,
+		DataCleanInterval:          time.Hour,
+		SucceedMessageExpiredAfter: 24 * time.Hour,
+		SnowflakeNode:              1,
+		Logger:                     &eventbus.StdLogger{},
+	}
+	engine, err = New(EngineTypeGorm, db, bus, opts)
 	if err != nil {
 		t.Fatalf("new gorm engine error: %s", err)
 	}
@@ -86,7 +94,8 @@ func TestGorm(t *testing.T) {
 			return
 		}
 	}()
-	time.Sleep(1 * time.Second)
+	fmt.Println("暂停30秒，停止RabbitMQ")
+	time.Sleep(30 * time.Second)
 	for i := 0; i < 100; i++ {
 		err = engine.Publish(ctx, topic, "sync message")
 		if err != nil {
@@ -95,5 +104,6 @@ func TestGorm(t *testing.T) {
 		}
 		fmt.Println("Publish sync success")
 	}
-	time.Sleep(time.Second * 5)
+	fmt.Println("暂停3分钟，测试重试机制")
+	time.Sleep(3 * time.Minute)
 }
