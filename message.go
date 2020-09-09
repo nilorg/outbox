@@ -7,8 +7,8 @@ import (
 )
 
 const (
-	// Version 版本
-	Version = "v1"
+	// MessageVersion 版本
+	MessageVersion = "v1"
 )
 
 // Message 消息
@@ -45,5 +45,14 @@ func encodeValue(v *eventbus.Message) (s string, err error) {
 		return
 	}
 	s = string(data)
+	return
+}
+
+func decodeValue(data []byte) (msg *eventbus.Message, err error) {
+	var tempMsg eventbus.Message
+	if err = json.Unmarshal(data, &tempMsg); err != nil {
+		return
+	}
+	msg = &tempMsg
 	return
 }

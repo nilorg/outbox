@@ -14,6 +14,11 @@ type Published struct {
 	StatusName string     `json:"status_name" gorm:"index;column:status_name;type:VARCHAR(40);not null"`
 }
 
+// TableName ...
+func (Published) TableName() string {
+	return "published"
+}
+
 // Received ...
 type Received struct {
 	ID         int64      `json:"id" gorm:"column:id;primaryKey;type:BIGINT(20)"`
@@ -27,9 +32,7 @@ type Received struct {
 	StatusName string     `json:"status_name" gorm:"index;column:status_name;type:VARCHAR(40);not null"`
 }
 
-// CommitMessage 提交message
-type CommitMessage struct {
-	Topic         string
-	Value         interface{}
-	CallbackTopic string
+// TableName ...
+func (Received) TableName() string {
+	return "received"
 }

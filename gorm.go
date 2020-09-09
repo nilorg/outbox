@@ -20,13 +20,16 @@ const (
 
 // gormEngine ...
 type gormEngine struct {
-	db       *gorm.DB
-	tx       *gorm.DB
-	txFlag   bool
-	txMutex  sync.Mutex
-	node     *snowflake.Node
-	eventBus eventbus.EventBus
-	logger   Logger
+	options             *EngineOptions
+	db                  *gorm.DB
+	tx                  *gorm.DB
+	txFlag              bool
+	txMutex             sync.Mutex
+	node                *snowflake.Node
+	eventBus            eventbus.EventBus
+	subscribeItems      map[string]*subscribeItem
+	subscribeItemsMutex sync.Mutex
+	logger              Logger
 }
 
 // Subscribe ...
@@ -40,7 +43,18 @@ func (e *gormEngine) SubscribeAsync(ctx context.Context, topic string, h Subscri
 }
 
 func (e *gormEngine) subscribe(ctx context.Context, topic string, h SubscribeHandler, async bool) (err error) {
+	e.subscribeItemsMutex.Lock()
+	defer e.subscribeItemsMutex.Unlock()
+
 	group, _ := eventbus.FromGroupIDContext(ctx)
+
+	hex := fmt.Sprintf("%s-%s", topic, group)
+	e.subscribeItems[hex] = &subscribeItem{
+		Topic: topic,
+		Group: group,
+		h:     h,
+	}
+
 	if async {
 		return e.eventBus.SubscribeAsync(ctx, topic, e.newSubscribeHandler(topic, group, h))
 	}
@@ -56,7 +70,7 @@ func (e *gormEngine) newSubscribeHandler(topic, group string, h SubscribeHandler
 		}
 		r := &Received{
 			ID:         id,
-			Version:    Version,
+			Version:    MessageVersion,
 			Topic:      topic,
 			Group:      group,
 			Value:      value,
@@ -67,9 +81,6 @@ func (e *gormEngine) newSubscribeHandler(topic, group string, h SubscribeHandler
 		msg := Message(*baseMsg)
 		hErr := h(ctx, &msg)
 		if hErr != nil {
-			// 下次自动执行时间
-			exp := time.Now().Add(5 * time.Minute)
-			r.ExpiresAt = &exp
 			// 使用日志组件，打印日志
 			if group != "" {
 				e.logger.Errorf(ctx, "exec subscribe %s handler error: %s", topic, hErr)
@@ -77,6 +88,9 @@ func (e *gormEngine) newSubscribeHandler(topic, group string, h SubscribeHandler
 				e.logger.Errorf(ctx, "exec subscribe %s(%s) handler error: %s", topic, group, hErr)
 			}
 		} else {
+			// 成功消息记录，到期时间
+			exp := time.Now().AddDate(0, 0, 15)
+			r.ExpiresAt = &exp
 			r.StatusName = StatusNameSucceeded
 		}
 		// 记录发件箱 成功日志
@@ -120,7 +134,7 @@ func (e *gormEngine) publish(ctx context.Context, topic string, v interface{}, a
 	}
 	p := &Published{
 		ID:         id,
-		Version:    Version,
+		Version:    MessageVersion,
 		Topic:      topic,
 		Value:      value,
 		Retries:    0,
@@ -134,12 +148,12 @@ func (e *gormEngine) publish(ctx context.Context, topic string, v interface{}, a
 		pubErr = e.eventBus.Publish(ctx, topic, msg)
 	}
 	if pubErr != nil {
-		// 下次自动执行时间
-		exp := time.Now().Add(5 * time.Minute)
-		p.ExpiresAt = &exp
 		// 使用日志组件，打印日志
 		e.logger.Errorf(ctx, "exec async:%v publish %s error: %s", async, topic, pubErr)
 	} else {
+		// 成功消息记录，到期时间
+		exp := time.Now().Add(24 * time.Hour)
+		p.ExpiresAt = &exp
 		p.StatusName = StatusNameSucceeded
 	}
 	var db *gorm.DB
@@ -156,19 +170,55 @@ func (e *gormEngine) publish(ctx context.Context, topic string, v interface{}, a
 }
 
 func (e *gormEngine) insertPublishedFromGorm(db *gorm.DB, p *Published) error {
+	if p.Version == "" {
+		p.Version = MessageVersion
+	}
 	return db.Create(p).Error
 }
 
 func (e *gormEngine) insertReceivedFromGorm(db *gorm.DB, r *Received) error {
+	if r.Version == "" {
+		r.Version = MessageVersion
+	}
 	return db.Create(r).Error
 }
 
 func (e *gormEngine) changePublishState(db *gorm.DB, msgID int64, state string) error {
-	return db.Model(&Published{}).Where("id = ?", msgID).Updates(&Published{StatusName: state}).Error
+	return db.Model(&Published{}).Where(&Published{ID: msgID}).Updates(&Published{StatusName: state}).Error
 }
 
 func (e *gormEngine) changeReceiveState(db *gorm.DB, msgID int64, state string) error {
-	return db.Model(&Received{}).Where("id = ?", msgID).Updates(&Received{StatusName: state}).Error
+	return db.Model(&Received{}).Where(&Received{ID: msgID}).Updates(&Received{StatusName: state}).Error
+}
+
+func (e *gormEngine) findPublishByState(db *gorm.DB, state string) (list []*Published, err error) {
+	err = db.Model(&Published{}).Where(&Published{Version: MessageVersion, StatusName: state}).Find(&list).Error
+	return
+}
+
+func (e *gormEngine) findReceiveByState(db *gorm.DB, state string) (list []*Received, err error) {
+	err = db.Model(&Received{}).Where(&Received{Version: MessageVersion, StatusName: state}).Find(&list).Error
+	return
+}
+
+func (e *gormEngine) deletePublished(db *gorm.DB, state string, expired time.Time) (err error) {
+	err = db.Delete(&Published{}, "version = ? and status_name = ? and expires_at <= ?", MessageVersion, state, expired).Error
+	return
+}
+
+func (e *gormEngine) deleteReceived(db *gorm.DB, state string, expired time.Time) (err error) {
+	err = db.Delete(&Received{}, "version = ? and status_name = ? and expires_at <= ?", MessageVersion, state, expired).Error
+	return
+}
+
+func (e *gormEngine) retriePublished(db *gorm.DB, msgID int64) (err error) {
+	err = db.Model(&Published{}).Where("id = ?", msgID).Update("retries", gorm.Expr("retries + ?", 1)).Error
+	return
+}
+
+func (e *gormEngine) retrieReceived(db *gorm.DB, msgID int64) (err error) {
+	err = db.Model(&Received{}).Where("id = ?", msgID).Update("retries", gorm.Expr("retries + ?", 1)).Error
+	return
 }
 
 // Begin ...
@@ -232,4 +282,141 @@ func (e *gormEngine) Transaction(ctx context.Context, h TransactionHandler, args
 	}
 	err = e.Commit(ctx, args...)
 	return
+}
+
+// dataClean 数据清理
+func (e *gormEngine) dataClean() (err error) {
+	expd := time.Now().Add(e.options.SucceedMessageExpiredAfter)
+	if err = e.deletePublished(e.db, StatusNameSucceeded, expd); err != nil {
+		return
+	}
+	if err = e.deleteReceived(e.db, StatusNameSucceeded, expd); err != nil {
+		return
+	}
+	return
+}
+
+// failedRetryInterval 失败重试间隔
+func (e *gormEngine) failedRetryInterval() (err error) {
+	if err = e.failedPublishedRetryInterval(); err != nil {
+		return
+	}
+	if err = e.failedReceivedRetryInterval(); err != nil {
+		return
+	}
+	return
+}
+
+// failedPublishedRetryInterval 失败重试间隔
+func (e *gormEngine) failedPublishedRetryInterval() (err error) {
+	var (
+		publisheds []*Published
+	)
+	if publisheds, err = e.findPublishByState(e.db, StatusNameScheduled); err != nil {
+		return
+	}
+	ctx := context.Background()
+	for _, published := range publisheds {
+		// 重试次数超过50，执行通知回调
+		if published.Retries >= 50 {
+			if err = e.changePublishState(e.db, published.ID, StatusNameFailed); err != nil {
+				return
+			}
+			if e.options.FailedThresholdCallback != nil {
+				go e.options.FailedThresholdCallback(ctx, CallbackTypePublished, published)
+			}
+		}
+		// 版本不相同，跳过执行
+		if published.Version != MessageVersion {
+			continue
+		}
+		if msg, msgErr := decodeValue([]byte(published.Value)); msgErr != nil {
+			e.logger.Errorf(ctx, "failedRetryInterval-decodeValue error: %v", msgErr)
+			if err = e.retriePublished(e.db, published.ID); err != nil {
+				return
+			}
+		} else {
+			if pubErr := e.eventBus.Publish(ctx, published.Topic, msg); pubErr != nil {
+				if err = e.retriePublished(e.db, published.ID); err != nil {
+					return
+				}
+			} else {
+				if err = e.changePublishState(e.db, published.ID, StatusNameSucceeded); err != nil {
+					return
+				}
+			}
+		}
+	}
+	return
+}
+
+// failedReceivedRetryInterval 失败重试间隔
+func (e *gormEngine) failedReceivedRetryInterval() (err error) {
+	var (
+		receiveds []*Received
+	)
+	ctx := context.Background()
+	if receiveds, err = e.findReceiveByState(e.db, StatusNameScheduled); err != nil {
+		return
+	}
+	e.subscribeItemsMutex.Lock()
+	defer e.subscribeItemsMutex.Unlock()
+
+	for _, received := range receiveds {
+		// 重试次数超过50，执行通知回调
+		if received.Retries >= 50 {
+			if err = e.changeReceiveState(e.db, received.ID, StatusNameFailed); err != nil {
+				return
+			}
+			if e.options.FailedThresholdCallback != nil {
+				go e.options.FailedThresholdCallback(ctx, CallbackTypeReceived, received)
+			}
+		}
+		// 版本不相同，跳过执行
+		if received.Version != MessageVersion {
+			continue
+		}
+		if msg, msgErr := decodeValue([]byte(received.Value)); msgErr != nil {
+			e.logger.Errorf(ctx, "failedRetryInterval-decodeValue error: %v", msgErr)
+			if err = e.retrieReceived(e.db, received.ID); err != nil {
+				return
+			}
+		} else {
+			hex := fmt.Sprintf("%s-%s", received.Topic, received.Group)
+			if subscribeItem, subscribeItemOk := e.subscribeItems[hex]; !subscribeItemOk || subscribeItem.h == nil {
+				if err = e.retrieReceived(e.db, received.ID); err != nil {
+					return
+				}
+			} else {
+				subMsg := Message(*msg)
+				if subErr := subscribeItem.h(ctx, &subMsg); subErr != nil {
+					if err = e.retrieReceived(e.db, received.ID); err != nil {
+						return
+					}
+				} else {
+					if err = e.changePublishState(e.db, received.ID, StatusNameSucceeded); err != nil {
+						return
+					}
+				}
+			}
+		}
+	}
+	return
+}
+
+func (e *gormEngine) sentry() {
+	go func() {
+		dataCleanTicker := time.NewTicker(e.options.DataCleanInterval)
+		defer dataCleanTicker.Stop()
+		failedRetryIntervalTicker := time.NewTicker(e.options.FailedRetryInterval)
+		defer dataCleanTicker.Stop()
+		for {
+			select {
+			case <-dataCleanTicker.C:
+				recoverHandle(e.logger, e.dataClean)
+			case <-failedRetryIntervalTicker.C:
+				recoverHandle(e.logger, e.failedRetryInterval)
+			}
+		}
+	}()
 }
