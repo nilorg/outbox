@@ -2,6 +2,13 @@ package outbox
 
 import "time"
 
+const (
+	// PublishedTableName ...
+	PublishedTableName = "outbox_published"
+	// ReceivedTableName ...
+	ReceivedTableName = "outbox_received"
+)
+
 // Published ...
 type Published struct {
 	ID         int64      `json:"id" gorm:"column:id;primaryKey;type:BIGINT(20)"`
@@ -16,7 +23,7 @@ type Published struct {
 
 // TableName ...
 func (Published) TableName() string {
-	return "published"
+	return PublishedTableName
 }
 
 // Received ...
@@ -34,5 +41,5 @@ type Received struct {
 
 // TableName ...
 func (Received) TableName() string {
-	return "received"
+	return ReceivedTableName
 }
