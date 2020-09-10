@@ -23,10 +23,9 @@ type TransactionHandler func(ctx context.Context, db interface{}) error
 
 // Transactioner 事务接口
 type Transactioner interface {
-	Begin(ctx context.Context, opts ...*sql.TxOptions) (tx interface{}, err error)
 	Rollback(ctx context.Context) (err error)
 	Commit(ctx context.Context, args ...*CommitMessage) (err error)
-	Transaction(ctx context.Context, h TransactionHandler, args ...*CommitMessage) (err error)
+	Session() interface{}
 }
 
 // SubscribeHandler 订阅处理
@@ -55,7 +54,8 @@ type subscribeItem struct {
 type Engine interface {
 	Publisher
 	Subscriber
-	Transactioner
+	Begin(ctx context.Context, opts ...*sql.TxOptions) (tx Transactioner, err error)
+	Transaction(ctx context.Context, h TransactionHandler, args ...*CommitMessage) (err error)
 }
 
 var (

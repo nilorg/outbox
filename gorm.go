@@ -22,9 +22,6 @@ const (
 type gormEngine struct {
 	options             *EngineOptions
 	db                  *gorm.DB
-	tx                  *gorm.DB
-	txFlag              bool
-	txMutex             sync.Mutex
 	node                *snowflake.Node
 	eventBus            eventbus.EventBus
 	subscribeItems      map[string]*subscribeItem
@@ -103,15 +100,15 @@ func (e *gormEngine) newSubscribeHandler(topic, group string, h SubscribeHandler
 
 // Publish ...
 func (e *gormEngine) Publish(ctx context.Context, topic string, v interface{}, callback ...string) (err error) {
-	return e.publish(ctx, topic, v, false, callback...)
+	return e.publish(ctx, e.db, topic, v, false, callback...)
 }
 
 // PublishAsync ...
 func (e *gormEngine) PublishAsync(ctx context.Context, topic string, v interface{}, callback ...string) (err error) {
-	return e.publish(ctx, topic, v, true, callback...)
+	return e.publish(ctx, e.db, topic, v, true, callback...)
 }
 
-func (e *gormEngine) publish(ctx context.Context, topic string, v interface{}, async bool, callback ...string) (err error) {
+func (e *gormEngine) publish(ctx context.Context, db *gorm.DB, topic string, v interface{}, async bool, callback ...string) (err error) {
 	id := e.node.Generate().Int64()
 	timeNow := time.Now()
 	callbackName := ""
@@ -155,12 +152,6 @@ func (e *gormEngine) publish(ctx context.Context, topic string, v interface{}, a
 		exp := time.Now().Add(e.options.SucceedMessageExpiredAfter)
 		p.ExpiresAt = &exp
 		p.StatusName = StatusNameSucceeded
-	}
-	var db *gorm.DB
-	if e.txFlag {
-		db = e.tx
-	} else {
-		db = e.db
 	}
 	// 记录发件箱 成功日志
 	if err = e.insertPublishedFromGorm(db, p); err != nil {
@@ -232,65 +223,36 @@ func (e *gormEngine) retrieReceived(db *gorm.DB, msgID int64) (err error) {
 }
 
 // Begin ...
-func (e *gormEngine) Begin(ctx context.Context, opts ...*sql.TxOptions) (tx interface{}, err error) {
-	e.txMutex.Lock()
-	defer e.txMutex.Unlock()
+func (e *gormEngine) Begin(ctx context.Context, opts ...*sql.TxOptions) (tx Transactioner, err error) {
 	gormTx := e.db.WithContext(ctx).Begin(opts...)
 	if err = gormTx.Error; err != nil {
-		e.tx = nil
 		return
 	}
-	e.tx = gormTx
-	e.txFlag = true
-
-	tx = gormTx
-	return
-}
-
-// Rollback ...
-func (e *gormEngine) Rollback(ctx context.Context) (err error) {
-	e.txMutex.Lock()
-	defer e.txMutex.Unlock()
-	err = e.tx.WithContext(ctx).Rollback().Error
-	if err != nil {
-		return
+	tx = &gormTransaction{
+		session: gormTx,
+		logger:  e.logger,
+		publish: e.publish,
 	}
-	e.txFlag = false
-	return
-}
-
-// Commit ...
-func (e *gormEngine) Commit(ctx context.Context, args ...*CommitMessage) (err error) {
-	e.txMutex.Lock()
-	defer e.txMutex.Unlock()
-
-	if len(args) > 0 {
-		for _, arg := range args {
-			if pubErr := e.publish(ctx, arg.Topic, arg.Value, false, arg.CallbackTopic); pubErr != nil {
-				e.logger.Errorf(ctx, "commit publish error: %s", pubErr)
-				err = e.Rollback(ctx)
-				return
-			}
-		}
-	}
-	err = e.tx.WithContext(ctx).Commit().Error
-	if err != nil {
-		return
-	}
-	e.txFlag = false
 	return
 }
 
 func (e *gormEngine) Transaction(ctx context.Context, h TransactionHandler, args ...*CommitMessage) (err error) {
-	var tx interface{}
+	var tx Transactioner
 	tx, err = e.Begin(ctx)
 	if err != nil {
 		return
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback(ctx)
+		}
+	}()
+
 	if err = h(ctx, tx); err != nil {
-		e.Rollback(ctx)
+		tx.Rollback(ctx)
+		return
 	}
-	err = e.Commit(ctx, args...)
+	err = tx.Commit(ctx, args...)
 	return
 }
 
@@ -431,4 +393,33 @@ func (e *gormEngine) sentry() {
 			}
 		}
 	}()
+}
+
+type gormTransaction struct {
+	session *gorm.DB
+	logger  Logger
+	publish func(ctx context.Context, db *gorm.DB, topic string, v interface{}, async bool, callback ...string) (err error)
+}
+
+func (tran *gormTransaction) Session() interface{} {
+	return tran.session
+}
+
+func (tran *gormTransaction) Rollback(ctx context.Context) (err error) {
+	err = tran.session.WithContext(ctx).Rollback().Error
+	return
+}
+
+func (tran *gormTransaction) Commit(ctx context.Context, args ...*CommitMessage) (err error) {
+	if len(args) > 0 {
+		for _, arg := range args {
+			if pubErr := tran.publish(ctx, tran.session, arg.Topic, arg.Value, false, arg.CallbackTopic); pubErr != nil {
+				tran.logger.Errorf(ctx, "commit publish error: %s", pubErr)
+				err = tran.Rollback(ctx)
+				return
+			}
+		}
+	}
+	err = tran.session.WithContext(ctx).Commit().Error
+	return
 }

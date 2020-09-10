@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/nilorg/eventbus"
 	"github.com/nilorg/outbox"
@@ -56,12 +57,13 @@ func init() {
 func main() {
 	db.AutoMigrate(User{})
 	testUserTran()
+	time.Sleep(5 * time.Second)
 }
 
 func testUserTran() {
 	ctx := context.Background()
 	var (
-		tx  interface{}
+		tx  outbox.Transactioner
 		err error
 	)
 	tx, err = engine.Begin(ctx)
@@ -69,18 +71,18 @@ func testUserTran() {
 		log.Printf("tx error: %v", err)
 		return
 	}
-	txDb := tx.(*gorm.DB)
+	txDb := tx.Session().(*gorm.DB)
 	err = txDb.Create(&User{
 		Name: "test_name",
 		Age:  11,
 	}).Error
 	if err != nil {
-		engine.Rollback(ctx)
+		tx.Rollback(ctx)
 		return
 	}
-	engine.Commit(ctx, &outbox.CommitMessage{
+	tx.Commit(ctx, &outbox.CommitMessage{
 		Topic: "user.commit",
-		Value: "提交内容。。。",
+		Value: "提交内容时间:" + time.Now().String(),
 	})
 }
 
