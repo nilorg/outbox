@@ -57,6 +57,7 @@ func init() {
 func main() {
 	db.AutoMigrate(User{})
 	testUserTran()
+	testUserTran2()
 	time.Sleep(5 * time.Second)
 }
 
@@ -84,6 +85,26 @@ func testUserTran() {
 		Topic: "user.commit",
 		Value: "提交内容时间:" + time.Now().String(),
 	})
+}
+
+func testUserTran2() {
+	ctx := context.Background()
+
+	err := engine.Transaction(ctx, func(ctx context.Context, db interface{}) error {
+		txDb := db.(*gorm.DB)
+		err := txDb.Create(&User{
+			Name: "testUserTran2",
+			Age:  11,
+		}).Error
+		return err
+	}, &outbox.CommitMessage{
+		Topic: "user.commit",
+		Value: "提交内容时间2222:" + time.Now().String(),
+	})
+
+	if err != nil {
+		fmt.Printf("tran error: %s\n", err)
+	}
 }
 
 // User ...

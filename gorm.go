@@ -248,7 +248,7 @@ func (e *gormEngine) Transaction(ctx context.Context, h TransactionHandler, args
 		}
 	}()
 
-	if err = h(ctx, tx); err != nil {
+	if err = h(ctx, tx.Session()); err != nil {
 		tx.Rollback(ctx)
 		return
 	}
