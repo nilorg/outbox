@@ -120,7 +120,7 @@ func (e *gormEngine) publish(ctx context.Context, db *gorm.DB, topic string, v i
 			MessageHeaderMsgIDKey:       fmt.Sprint(id),
 			MessageHeaderMsgTopicKey:    topic,
 			MessageHeaderMsgTypeKey:     reflect.TypeOf(v).Name(),
-			MessageHeaderMsgSendTimeKey: timeNow.Format("2006-01-02 15:04:05"),
+			MessageHeaderMsgSendTimeKey: fmt.Sprint(timeNow.Unix()),
 			MessageHeaderMsgCallbackKey: callbackName,
 		},
 		Value: v,

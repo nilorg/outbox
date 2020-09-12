@@ -65,7 +65,7 @@ func TestGorm(t *testing.T) {
 	ctxGroup1 := eventbus.NewGroupIDContext(ctx, "nilorg.events.sync.group1")
 	go func() {
 		err = engine.Subscribe(ctxGroup1, topic, func(ctx context.Context, msg *Message) error {
-			fmt.Printf("group1 %s: %+v\n", topic, msg)
+			fmt.Printf("group1 %s: %+v is timeout: %v\n", topic, msg, msg.IsTimeout(3*time.Minute))
 			return nil
 		})
 		if err != nil {
@@ -75,7 +75,7 @@ func TestGorm(t *testing.T) {
 	}()
 	go func() {
 		err = engine.Subscribe(ctxGroup1, topic, func(ctx context.Context, msg *Message) error {
-			fmt.Printf("group1(copy) %s: %+v\n", topic, msg)
+			fmt.Printf("group1(copy) %s: %+v is timeout: %v\n", topic, msg, msg.IsTimeout(3*time.Minute))
 			return nil
 		})
 		if err != nil {
@@ -86,7 +86,7 @@ func TestGorm(t *testing.T) {
 	ctxGroup2 := eventbus.NewGroupIDContext(ctx, "nilorg.events.sync.group2")
 	go func() {
 		err = engine.Subscribe(ctxGroup2, topic, func(ctx context.Context, msg *Message) error {
-			fmt.Printf("group2 %s: %+v\n", topic, msg)
+			fmt.Printf("group2 %s: %+v is timeout: %v\n", topic, msg, msg.IsTimeout(3*time.Minute))
 			return nil
 		})
 		if err != nil {

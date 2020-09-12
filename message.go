@@ -2,6 +2,8 @@ package outbox
 
 import (
 	"encoding/json"
+	"strconv"
+	"time"
 
 	"github.com/nilorg/eventbus"
 )
@@ -36,6 +38,21 @@ func (m *Message) IsUser() bool {
 func (m *Message) User() string {
 	user, _ := m.Header[MessageHeaderMsgUserKey]
 	return user
+}
+
+// IsTimeout 是否超时
+func (m *Message) IsTimeout(timeout time.Duration) bool {
+	v, ok := m.Header[MessageHeaderMsgSendTimeKey]
+	if !ok {
+		return true
+	}
+	utc, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return true
+	}
+	t := time.Unix(utc, 0).Add(timeout)
+	u := time.Now()
+	return t.Before(u)
 }
 
 func encodeValue(v *eventbus.Message) (s string, err error) {
