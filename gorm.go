@@ -3,6 +3,7 @@ package outbox
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"sync"
@@ -62,7 +63,12 @@ func (e *gormEngine) newSubscribeHandler(topic, group string, h SubscribeHandler
 	return func(ctx context.Context, baseMsg *eventbus.Message) (err error) {
 		id := e.node.Generate().Int64()
 		var value string
-		if value, err = encodeValue(baseMsg); err != nil {
+		if value, err = EncodeValue(baseMsg.Value); err != nil {
+			return
+		}
+		baseMsg.Value = value
+		var bytes []byte
+		if bytes, err = json.Marshal(baseMsg); err != nil {
 			return
 		}
 		r := &Received{
@@ -70,7 +76,7 @@ func (e *gormEngine) newSubscribeHandler(topic, group string, h SubscribeHandler
 			Version:    MessageVersion,
 			Topic:      topic,
 			Group:      group,
-			Value:      value,
+			Value:      string(bytes),
 			Retries:    0,
 			CreatedAt:  time.Now(),
 			StatusName: StatusNameScheduled,
@@ -115,6 +121,10 @@ func (e *gormEngine) publish(ctx context.Context, db *gorm.DB, topic string, v i
 	if len(callback) > 0 {
 		callbackName = callback[0]
 	}
+	var value string
+	if value, err = EncodeValue(v); err != nil {
+		return
+	}
 	msg := &eventbus.Message{
 		Header: eventbus.MessageHeader{
 			MessageHeaderMsgIDKey:       fmt.Sprint(id),
@@ -123,17 +133,17 @@ func (e *gormEngine) publish(ctx context.Context, db *gorm.DB, topic string, v i
 			MessageHeaderMsgSendTimeKey: fmt.Sprint(timeNow.Unix()),
 			MessageHeaderMsgCallbackKey: callbackName,
 		},
-		Value: v,
+		Value: value,
 	}
-	var value string
-	if value, err = encodeValue(msg); err != nil {
+	var bytes []byte
+	if bytes, err = json.Marshal(msg); err != nil {
 		return
 	}
 	p := &Published{
 		ID:         id,
 		Version:    MessageVersion,
 		Topic:      topic,
-		Value:      value,
+		Value:      string(bytes),
 		Retries:    0,
 		CreatedAt:  timeNow,
 		StatusName: StatusNameScheduled,
@@ -310,8 +320,8 @@ func (e *gormEngine) failedPublishedRetryInterval() (err error) {
 		if err = e.retriePublished(e.db, published.ID); err != nil {
 			return
 		}
-
-		if msg, msgErr := decodeValue([]byte(published.Value)); msgErr != nil {
+		var msg Message
+		if msgErr := DecodeValue(published.Value, &msg); msgErr != nil {
 			e.logger.Errorf(ctx, "failedRetryInterval-decodeValue error: %v", msgErr)
 		} else {
 			if pubErr := e.eventBus.Publish(ctx, published.Topic, msg); pubErr != nil {
@@ -356,16 +366,15 @@ func (e *gormEngine) failedReceivedRetryInterval() (err error) {
 		if err = e.retrieReceived(e.db, received.ID); err != nil {
 			return
 		}
-
-		if msg, msgErr := decodeValue([]byte(received.Value)); msgErr != nil {
+		var msg Message
+		if msgErr := DecodeValue(received.Value, &msg); msgErr != nil {
 			e.logger.Errorf(ctx, "failedRetryInterval-decodeValue error: %v", msgErr)
 		} else {
 			hex := fmt.Sprintf("%s-%s", received.Topic, received.Group)
 			if subscribeItem, subscribeItemOk := e.subscribeItems[hex]; !subscribeItemOk || subscribeItem.h == nil {
 				e.logger.Warnf(ctx, "failedRetryInterval-subscribeItem %s error: %v", hex, msgErr)
 			} else {
-				subMsg := Message(*msg)
-				if subErr := subscribeItem.h(ctx, &subMsg); subErr != nil {
+				if subErr := subscribeItem.h(ctx, &msg); subErr != nil {
 					e.logger.Errorf(ctx, "failedRetryInterval-subscribeItem %s execute error: %v", hex, msgErr)
 				} else {
 					if err = e.changePublishStateSucceeded(e.db, received.ID); err != nil {

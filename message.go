@@ -1,6 +1,7 @@
 package outbox
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strconv"
 	"time"
@@ -55,21 +56,22 @@ func (m *Message) ID() string {
 	return id
 }
 
-func encodeValue(v *eventbus.Message) (s string, err error) {
-	var data []byte
-	data, err = json.Marshal(v)
-	if err != nil {
+// EncodeValue 对值进行编码
+func EncodeValue(v interface{}) (s string, err error) {
+	var bytes []byte
+	if bytes, err = json.Marshal(v); err != nil {
 		return
 	}
-	s = string(data)
+	s = base64.StdEncoding.EncodeToString(bytes)
 	return
 }
 
-func decodeValue(data []byte) (msg *eventbus.Message, err error) {
-	var tempMsg eventbus.Message
-	if err = json.Unmarshal(data, &tempMsg); err != nil {
+// DecodeValue 对值进行解码
+func DecodeValue(s string, v interface{}) (err error) {
+	var bytes []byte
+	if bytes, err = base64.StdEncoding.DecodeString(s); err != nil {
 		return
 	}
-	msg = &tempMsg
+	err = json.Unmarshal(bytes, v)
 	return
 }
