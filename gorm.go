@@ -321,7 +321,7 @@ func (e *gormEngine) failedPublishedRetryInterval() (err error) {
 			return
 		}
 		var msg Message
-		if msgErr := DecodeValue(published.Value, &msg); msgErr != nil {
+		if msgErr := json.Unmarshal([]byte(published.Value), &msg); msgErr != nil {
 			e.logger.Errorf(ctx, "failedRetryInterval-decodeValue error: %v", msgErr)
 		} else {
 			if pubErr := e.eventBus.Publish(ctx, published.Topic, msg); pubErr != nil {
@@ -367,7 +367,7 @@ func (e *gormEngine) failedReceivedRetryInterval() (err error) {
 			return
 		}
 		var msg Message
-		if msgErr := DecodeValue(received.Value, &msg); msgErr != nil {
+		if msgErr := json.Unmarshal([]byte(received.Value), &msg); msgErr != nil {
 			e.logger.Errorf(ctx, "failedRetryInterval-decodeValue error: %v", msgErr)
 		} else {
 			hex := fmt.Sprintf("%s-%s", received.Topic, received.Group)
@@ -377,7 +377,7 @@ func (e *gormEngine) failedReceivedRetryInterval() (err error) {
 				if subErr := subscribeItem.h(ctx, &msg); subErr != nil {
 					e.logger.Errorf(ctx, "failedRetryInterval-subscribeItem %s execute error: %v", hex, msgErr)
 				} else {
-					if err = e.changePublishStateSucceeded(e.db, received.ID); err != nil {
+					if err = e.changeReceiveStateSucceeded(e.db, received.ID); err != nil {
 						return
 					}
 				}
