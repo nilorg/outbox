@@ -55,6 +55,18 @@ func (m *Message) IsTimeout(timeout time.Duration) bool {
 	return t.Before(u)
 }
 
+// IsID 是否存在ID
+func (m *Message) IsID() bool {
+	_, ok := m.Header[MessageHeaderMsgIDKey]
+	return ok
+}
+
+// ID msg id
+func (m *Message) ID() string {
+	id, _ := m.Header[MessageHeaderMsgIDKey]
+	return id
+}
+
 func encodeValue(v *eventbus.Message) (s string, err error) {
 	var data []byte
 	data, err = json.Marshal(v)
