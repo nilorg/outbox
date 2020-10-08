@@ -10,8 +10,8 @@ require (
 	github.com/stretchr/testify v1.6.1 // indirect
 	golang.org/x/sys v0.0.0-20191010194322-b09406accb47 // indirect
 	gopkg.in/check.v1 v1.0.0-20200902074654-038fdea0a05b // indirect
-	gorm.io/driver/mysql v1.0.1
-	gorm.io/gorm v1.20.0
+	gorm.io/driver/mysql v1.0.2
+	gorm.io/gorm v1.20.2
 )
 
 // replace github.com/nilorg/eventbus v0.0.0-20200909093902-120d016f5cfa => ../eventbus
