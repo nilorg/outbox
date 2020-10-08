@@ -28,18 +28,6 @@ func (m *Message) Callback() string {
 	return callback
 }
 
-// IsUser 是否存在用户
-func (m *Message) IsUser() bool {
-	_, ok := m.Header[MessageHeaderMsgUserKey]
-	return ok
-}
-
-// User 用户
-func (m *Message) User() string {
-	user, _ := m.Header[MessageHeaderMsgUserKey]
-	return user
-}
-
 // IsTimeout 是否超时
 func (m *Message) IsTimeout(timeout time.Duration) bool {
 	v, ok := m.Header[MessageHeaderMsgSendTimeKey]

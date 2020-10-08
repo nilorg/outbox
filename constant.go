@@ -11,8 +11,6 @@ const (
 	MessageHeaderMsgSendTimeKey = "nilorg.outbox.msg.sendtime"
 	// MessageHeaderMsgCallbackKey 消息回调
 	MessageHeaderMsgCallbackKey = "nilorg.outbox.msg.callback"
-	// MessageHeaderMsgUserKey 消息用户
-	MessageHeaderMsgUserKey = "nilorg.outbox.msg.user"
 )
 
 const (
