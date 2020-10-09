@@ -62,11 +62,6 @@ func (e *gormEngine) subscribe(ctx context.Context, topic string, h SubscribeHan
 func (e *gormEngine) newSubscribeHandler(topic, group string, h SubscribeHandler) eventbus.SubscribeHandler {
 	return func(ctx context.Context, baseMsg *eventbus.Message) (err error) {
 		id := e.node.Generate().Int64()
-		var value string
-		if value, err = EncodeValue(baseMsg.Value); err != nil {
-			return
-		}
-		baseMsg.Value = value
 		var bytes []byte
 		if bytes, err = json.Marshal(baseMsg); err != nil {
 			return
