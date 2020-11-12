@@ -92,7 +92,7 @@ type EngineOptions struct {
 }
 
 // New 创建
-func New(typ string, v interface{}, eventBus eventbus.EventBus, options ...*EngineOptions) (engine Engine, err error) {
+func New(typ EngineType, v interface{}, eventBus eventbus.EventBus, options ...*EngineOptions) (engine Engine, err error) {
 	if typ == EngineTypeGorm {
 		db := v.(*gorm.DB)
 		db.AutoMigrate(

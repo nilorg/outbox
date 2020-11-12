@@ -14,9 +14,12 @@ import (
 	"gorm.io/gorm"
 )
 
+// EngineType engine type
+type EngineType int
+
 const (
-	// EngineTypeGorm ...
-	EngineTypeGorm = "gorm"
+	// EngineTypeGorm engine type for gorm
+	EngineTypeGorm EngineType = iota + 1
 )
 
 // gormEngine ...
