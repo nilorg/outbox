@@ -4,9 +4,9 @@ go 1.14
 
 require (
 	github.com/bwmarrin/snowflake v0.3.0
-	github.com/go-redis/redis/v8 v8.3.3
+	github.com/go-redis/redis/v8 v8.4.4
 	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
-	github.com/nilorg/eventbus v0.0.0-20201203145336-5809b1fc4bd3
+	github.com/nilorg/eventbus v0.0.0-20211122103541-1855f4867cbf
 	github.com/streadway/amqp v1.0.0
 	gopkg.in/check.v1 v1.0.0-20200902074654-038fdea0a05b // indirect
 	gorm.io/driver/mysql v1.0.3
