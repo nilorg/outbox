@@ -6,9 +6,9 @@ import (
 	"log"
 	"time"
 
+	"github.com/isayme/go-amqp-reconnect/rabbitmq"
 	"github.com/nilorg/eventbus"
 	"github.com/nilorg/outbox"
-	"github.com/streadway/amqp"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
@@ -23,9 +23,9 @@ var (
 func init() {
 	var (
 		err  error
-		conn *amqp.Connection
+		conn *rabbitmq.Connection
 	)
-	conn, err = amqp.Dial("amqp://root:test123@localhost:5672/")
+	conn, err = rabbitmq.Dial("amqp://root:test123@localhost:5672/")
 	if err != nil {
 		panic(err)
 	}

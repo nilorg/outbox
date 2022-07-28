@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/isayme/go-amqp-reconnect/rabbitmq"
 	"github.com/nilorg/eventbus"
-	"github.com/streadway/amqp"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
@@ -15,8 +15,8 @@ import (
 
 func newTestEventBus(t *testing.T) (bus eventbus.EventBus) {
 	var err error
-	var conn *amqp.Connection
-	conn, err = amqp.Dial("amqp://root:test123@localhost:5672/")
+	var conn *rabbitmq.Connection
+	conn, err = rabbitmq.Dial("amqp://root:test123@localhost:5672/")
 	if err != nil {
 		t.Fatal(err)
 		return
