@@ -395,8 +395,8 @@ github.com/nats-io/nkeys v0.3.0/go.mod h1:gvUNGjVcM2IPr5rCsRsC6Wb3Hr2CQAm08dsxtV
 github.com/nats-io/nuid v1.0.1/go.mod h1:19wcPz3Ph3q0Jbyiqsd0kePYG7A95tJPxeL+1OSON2c=
 github.com/nats-io/stan.go v0.10.2/go.mod h1:vo2ax8K2IxaR3JtEMLZRFKIdoK/3o1/PKueapB7ezX0=
 github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e/go.mod h1:zD1mROLANZcx1PVRCS0qkT7pwLkGfwJo4zjcN/Tysno=
-github.com/nilorg/eventbus v0.0.0-20221209083253-2adcb079c085 h1:Sj1VNUcskomyd0d/otZp+A+gRVWTLDlHppDROyqRlto=
-github.com/nilorg/eventbus v0.0.0-20221209083253-2adcb079c085/go.mod h1:7i3D6FWUXjCC672+93j52KhkSQiw0jG96iZaBcQ+81I=
+github.com/nilorg/eventbus v0.0.0-20221211030939-8f75c78ee414 h1:YnSm7hWe/w6LMoerruxhd3qe1ES6MIdoRoj15V47yVg=
+github.com/nilorg/eventbus v0.0.0-20221211030939-8f75c78ee414/go.mod h1:7i3D6FWUXjCC672+93j52KhkSQiw0jG96iZaBcQ+81I=
 github.com/nilorg/pkg v0.0.0-20221209071251-2bf5826d6883 h1:CLBis7J3hNdCVMGemJAjroG1fnMNQxy93nqBlpwrJjg=
 github.com/nilorg/pkg v0.0.0-20221209071251-2bf5826d6883/go.mod h1:igi9mWKfXRXbj9tUstU+pkOhBRy/ewR5y9F0b6zMRq4=
 github.com/nilorg/sdk v0.0.0-20210429091026-95b6cdc95c84/go.mod h1:X1swpPdqguAZaBDoEPyEWHSsJii0YQ1o+3piMv6W3JU=
